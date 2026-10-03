@@ -19,7 +19,7 @@ O DDL completo (tabelas, colunas, PKs, FK, UNIQUE, CHECK e índice) está em [`d
 
 ```
 ├── pom.xml          # build Maven (gera target/app.jar)
-├── ddl.sql          # DDL das tabelas
+├── ddl.sql          # DDL das tabelas (também embutido no jar e executado na inicialização)
 ├── deploy.sh        # Azure CLI: cria os recursos e faz o deploy
 ├── README.md
 └── src/main
@@ -33,21 +33,38 @@ O DDL completo (tabelas, colunas, PKs, FK, UNIQUE, CHECK e índice) está em [`d
 - Conta Azure com assinatura ativa
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) (`az --version`)
 - JDK 17 e Maven (`java -version`, `mvn -version`)
-- Terminal Bash (Linux, macOS ou Git Bash no Windows) com `curl` e `openssl`
-- `sqlcmd` (opcional): se não tiver, o DDL é executado pelo Query editor do portal
+- Terminal Bash (Linux, macOS ou **Git Bash** no Windows) com `curl` e `openssl`
 
-### Passo a passo
+### 1. Registrar os provedores de recursos (uma vez por assinatura)
+Se a assinatura nunca usou esses serviços, o Azure retorna `MissingSubscriptionRegistration`.
 
 ```bash
-# 1) Clonar o repositório
+az provider register --namespace Microsoft.Sql
+az provider register --namespace Microsoft.Web
+az provider register --namespace Microsoft.Insights
+az provider register --namespace Microsoft.OperationalInsights
+
+# aguardar até os quatro ficarem "Registered"
+for p in Microsoft.Sql Microsoft.Web Microsoft.Insights Microsoft.OperationalInsights; do
+  echo -n "$p: "; az provider show -n $p --query registrationState -o tsv
+done
+```
+
+### 2. Clonar, compilar e autenticar
+
+```bash
 git clone <URL_DO_REPOSITORIO>
 cd <PASTA_DO_REPOSITORIO>
 
-# 2) Autenticar no Azure e conferir a assinatura
-az login
-az account show
+mvn clean package -DskipTests      # deve terminar em BUILD SUCCESS e gerar target/app.jar
 
-# 3) Executar o deploy (a partir da raiz do projeto)
+az login
+az account show                    # confirme a assinatura
+```
+
+### 3. Executar o deploy (a partir da raiz do projeto)
+
+```bash
 bash deploy.sh
 ```
 
@@ -58,24 +75,34 @@ bash deploy.sh
 
 | # | Etapa | Comando principal |
 |---|---|---|
-| 1 | Cria o Resource Group (`rg-dimdim`, região `eastus`) | `az group create` |
-| 2 | Cria o SQL Server (tenta `eastus`, `eastus2`, `centralus`, `westus3` e `brazilsouth` até uma aceitar) | `az sql server create` |
+| 1 | Cria o Resource Group `rg-dimdim` | `az group create` |
+| 2 | Cria o SQL Server, testando as regiões permitidas pela assinatura até uma aceitar (`southafricanorth`, `chilecentral`, `eastus2`, `eastus`, `southcentralus`) | `az sql server create` |
 | 3 | Libera o firewall (serviços Azure e o IP de quem executa) e cria o banco `dimdimdb` (Basic) | `az sql server firewall-rule create`, `az sql db create` |
-| 4 | Executa o `ddl.sql` no banco | `sqlcmd` (ou Query editor do portal) |
-| 5 | Cria o Application Insights | `az monitor app-insights component create` |
-| 6 | Cria o App Service Plan (B1 Linux) e o Web App (`JAVA:17-java17`) | `az appservice plan create`, `az webapp create` |
+| 4 | Cria as tabelas: o `ddl.sql` é embutido no `app.jar` e executado pela aplicação na primeira inicialização (script idempotente) | `spring.sql.init` |
+| 5 | Cria o App Service Plan (B1 Linux; F1 se faltar cota) e o Web App `JAVA:17-java17`, testando as regiões permitidas | `az appservice plan create`, `az webapp create` |
+| 6 | Cria o Application Insights na região do Web App (e ativa Always On e log do app) | `az monitor app-insights component create` |
 | 7 | Configura as App Settings (`DB_URL`, `DB_USER`, `DB_PASS`, connection string do Insights, agente `~3`, `WEBSITES_PORT=8080`) | `az webapp config appsettings set` |
 | 8 | Gera o `target/app.jar` e publica | `mvn clean package`, `az webapp deploy --type jar` |
-| 9 | Aguarda a aplicação responder HTTP 200 | `curl` |
+| 9 | Aguarda `GET /api/clientes` responder HTTP 200 (confirma aplicação e banco) | `curl` |
 
-### Se o `sqlcmd` não estiver instalado
-O script pausa na etapa 4. Nesse momento:
-1. No portal Azure, abra **SQL databases → dimdimdb → Query editor**.
-2. Entre com o usuário e a senha que estão no `deploy-secrets.txt`.
-3. Cole e execute o conteúdo do `ddl.sql`.
-4. Volte ao terminal e pressione **ENTER**.
+> **Regiões:** a assinatura usada tem uma política (*Allowed resource deployment regions*) que limita as
+> regiões, e algumas delas podem estar sem capacidade para novos SQL Servers. Por isso o script testa
+> uma região por vez, com um nome novo a cada tentativa. As mensagens de erro das regiões que recusam
+> são esperadas, desde que o script chegue em "SQL Server criado em `<região>`".
 
-Se o Query editor bloquear o acesso, adicione seu IP em **SQL server → Networking → Firewall rules**.
+### Criação das tabelas
+Não há passo manual: o `ddl.sql` é copiado para dentro do `app.jar` (configuração de `resources` no `pom.xml`)
+e executado pelo Spring (`spring.sql.init.mode=always`) a cada inicialização. O Hibernate está com `ddl-auto=none`: o schema é controlado só pelo `ddl.sql`.
+O script só cria o que ainda não existe, então reiniciar o app não apaga dados. Para conferir as tabelas,
+use o **Query editor** do portal (veja "Conferindo a persistência no banco").
+
+### Resultado
+Ao final, o script imprime a URL do app e grava, no `deploy-secrets.txt`, o servidor, o banco, o usuário,
+a senha e a URL do Web App. Para recuperar a URL depois:
+
+```bash
+echo https://$(az webapp list -g rg-dimdim --query "[0].defaultHostName" -o tsv)
+```
 
 ### Rodar localmente (opcional)
 ```bash
@@ -84,11 +111,23 @@ export DB_USER="dimdimadmin"
 export DB_PASS="<senha do deploy-secrets.txt>"
 mvn spring-boot:run
 ```
+Para isso, o seu IP precisa estar liberado no firewall do SQL Server.
 
 ### Limpeza dos recursos
 ```bash
 az group delete --name rg-dimdim --yes --no-wait
 ```
+
+### Problemas comuns
+
+| Erro | Causa e solução |
+|---|---|
+| `MissingSubscriptionRegistration` | Registrar os provedores (passo 1) e aguardar `Registered`. |
+| `RegionDoesNotAllowProvisioning` | A região está sem capacidade para novos SQL Servers. O script segue para a próxima região; se todas falharem, tentar mais tarde. |
+| `RequestDisallowedByAzure` | A política da assinatura bloqueia a região. Usar só as regiões permitidas (`az policy assignment list`). |
+| `command not found: java/mvn` | Instalar JDK 17 e Maven e configurar `JAVA_HOME` e `PATH` (no Git Bash, via `~/.bashrc`). |
+| App retorna 503 | Se for logo após o deploy, a aplicação ainda está iniciando (1 a 2 minutos). Se persistir, ver o log: `az webapp log tail -g rg-dimdim -n <NOME_DO_WEBAPP>`. Se o log mostrar `Schema-validation: wrong column type`, conferir se `spring.jpa.hibernate.ddl-auto=none`. Se mostrar erro de conexão, conferir as App Settings (`DB_URL`, `DB_USER`, `DB_PASS`) e o firewall do SQL Server. |
+| Reiniciar / reimplantar só o app | `mvn clean package -DskipTests` e `az webapp deploy -g rg-dimdim -n <NOME_DO_WEBAPP> --src-path target/app.jar --type jar` |
 
 ## Endpoints e JSON
 
@@ -157,12 +196,15 @@ curl -X POST $APP/api/clientes/1/transacoes -H "Content-Type: application/json" 
 curl $APP/api/clientes
 curl $APP/api/clientes/1/transacoes
 
-# Atualizar transação 1
+# Atualizar cliente 1 e transação 1
+curl -X PUT $APP/api/clientes/1 -H "Content-Type: application/json" \
+  -d '{"nome":"Steves Jobs Jr","email":"steves@dimdim.com"}'
 curl -X PUT $APP/api/transacoes/1 -H "Content-Type: application/json" \
   -d '{"tipo":"CREDITO","valor":200.00}'
 
-# Excluir transação 1
+# Excluir transação 1 e cliente 1
 curl -X DELETE $APP/api/transacoes/1
+curl -X DELETE $APP/api/clientes/1
 ```
 
 ## Conferindo a persistência no banco
