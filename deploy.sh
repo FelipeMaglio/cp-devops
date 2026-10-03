@@ -32,7 +32,7 @@ az sql server firewall-rule create -g $RG -s $SQL_SERVER -n MeuIP \
 az sql db create -g $RG -s $SQL_SERVER -n $SQL_DB --service-objective Basic
 
 # ---------- DDL (requer sqlcmd; senão rode sql/ddl.sql no Query editor do portal) ----------
-sqlcmd -S $SQL_SERVER.database.windows.net -d $SQL_DB -U $SQL_ADMIN -P "$SQL_PASS" -i sql/ddl.sql
+sqlcmd -S $SQL_SERVER.database.windows.net -d $SQL_DB -U $SQL_ADMIN -P "$SQL_PASS" -i ddl.sql
 
 # ---------- APPLICATION INSIGHTS ----------
 az extension add -n application-insights --yes
