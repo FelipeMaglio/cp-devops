@@ -42,6 +42,18 @@
 
     <build>
         <finalName>app</finalName>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- embute o ddl.sql da raiz no jar (executado na inicialização) -->
+            <resource>
+                <directory>${project.basedir}</directory>
+                <includes>
+                    <include>ddl.sql</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
