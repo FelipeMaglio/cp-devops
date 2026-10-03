@@ -15,7 +15,7 @@ O DDL está em [`sql/ddl.sql`](sql/ddl.sql).
 ```
 ├── pom.xml
 ├── sql/ddl.sql               # DDL das tabelas
-├── scripts/deploy.sh         # Azure CLI: cria recursos + deploy
+├── deploy.sh         # Azure CLI: cria recursos + deploy
 └── src/main/java/...         # código-fonte
 ```
 
@@ -31,8 +31,8 @@ O DDL está em [`sql/ddl.sql`](sql/ddl.sql).
 git clone <URL_DO_REPOSITORIO>
 cd dimdim-webapp
 az login
-# edite as variáveis no topo de scripts/deploy.sh (senha, região)
-./scripts/deploy.sh
+# edite as variáveis no topo de deploy.sh (senha, região)
+deploy.sh
 ```
 
 O script executa, em ordem:
