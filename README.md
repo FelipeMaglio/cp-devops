@@ -53,7 +53,7 @@ done
 ### 2. Clonar, compilar e autenticar
 
 ```bash
-git clone <URL_DO_REPOSITORIO>
+git clone https://github.com/FelipeMaglio/cp-devops
 cd <PASTA_DO_REPOSITORIO>
 
 mvn clean package -DskipTests      # deve terminar em BUILD SUCCESS e gerar target/app.jar
